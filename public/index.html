@@ -15,6 +15,9 @@
   td { padding: 4px 8px; border-bottom: 1px solid #222733; }
   td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
   button { background: #2a2f3a; color: inherit; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; margin-top: 12px; }
+  #dpad { display: grid; grid-template-areas: ". u ." "l . r" ". d ."; grid-template-columns: repeat(3, 64px);
+          grid-auto-rows: 64px; gap: 6px; margin-top: 16px; }
+  #dpad button { margin: 0; font-size: 22px; user-select: none; -webkit-user-select: none; touch-action: none; }
   #status.ok { color: #6fdc8c; } #status.bad { color: #ff6b6b; }
 </style>
 </head>
@@ -36,7 +39,13 @@
       <tr><td>Connect time</td><td id="conn">–</td></tr>
     </table>
     <button id="bot">Auto-move bot: off</button>
-    <p style="color:#8a90a0">Move the mouse / finger over the canvas. Open in several tabs or devices to see each other's dots.</p>
+    <div id="dpad">
+      <button data-dir="up" style="grid-area:u">▲</button>
+      <button data-dir="left" style="grid-area:l">◀</button>
+      <button data-dir="right" style="grid-area:r">▶</button>
+      <button data-dir="down" style="grid-area:d">▼</button>
+    </div>
+    <p style="color:#8a90a0">Move with WASD / arrow keys or the on-screen pad. Open in several tabs or devices to see each other's dots.</p>
   </div>
 </div>
 <script src="https://unpkg.com/colyseus.js@0.16.22/dist/colyseus.js"></script>
@@ -112,20 +121,37 @@ setInterval(() => {
   }
 }, 1000);
 
-function setTarget(e) {
-  const r = canvas.getBoundingClientRect();
-  target.x = ((e.clientX - r.left) / r.width) * WORLD;
-  target.y = ((e.clientY - r.top) / r.height) * WORLD;
-}
-canvas.addEventListener("pointermove", setTarget);
-canvas.addEventListener("pointerdown", setTarget);
+// movement: WASD / arrow keys and the on-screen D-pad both feed `held`
+const SPEED = 400; // world units per second
+const held = { up: false, down: false, left: false, right: false };
+const KEYS = { w: "up", arrowup: "up", s: "down", arrowdown: "down", a: "left", arrowleft: "left", d: "right", arrowright: "right" };
+window.addEventListener("keydown", e => { const d = KEYS[e.key.toLowerCase()]; if (d) { held[d] = true; e.preventDefault(); } });
+window.addEventListener("keyup", e => { const d = KEYS[e.key.toLowerCase()]; if (d) held[d] = false; });
+window.addEventListener("blur", () => { for (const d in held) held[d] = false; });
+document.querySelectorAll("[data-dir]").forEach(btn => {
+  const d = btn.dataset.dir;
+  const on = e => { held[d] = true; e.preventDefault(); };
+  const off = e => { held[d] = false; e.preventDefault(); };
+  btn.addEventListener("pointerdown", on);
+  btn.addEventListener("pointerup", off);
+  btn.addEventListener("pointerleave", off);
+  btn.addEventListener("pointercancel", off);
+});
+let lastTick = performance.now();
+setInterval(() => {
+  const now = performance.now(), dt = (now - lastTick) / 1000; lastTick = now;
+  if (botOn) return;
+  target.x = Math.max(0, Math.min(WORLD, target.x + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * SPEED * dt));
+  target.y = Math.max(0, Math.min(WORLD, target.y + ((held.down ? 1 : 0) - (held.up ? 1 : 0)) * SPEED * dt));
+}, 16);
 $("bot").onclick = () => { botOn = !botOn; $("bot").textContent = "Auto-move bot: " + (botOn ? "on" : "off"); };
 
 function draw() {
+  requestAnimationFrame(draw);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const k = canvas.width / WORLD;
   let n = 0;
-  if (room) room.state.players.forEach((p, id) => {
+  if (room && room.state && room.state.players) room.state.players.forEach((p, id) => {
     n++;
     ctx.beginPath();
     ctx.arc(p.x * k, p.y * k, id === myId ? 10 : 8, 0, Math.PI * 2);
@@ -135,7 +161,6 @@ function draw() {
     ctx.fillText(p.name + (id === myId ? " (you)" : ""), p.x * k + 12, p.y * k + 4);
   });
   $("players").textContent = n;
-  requestAnimationFrame(draw);
 }
 draw();
 connect();
