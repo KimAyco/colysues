@@ -4,7 +4,11 @@
   "private": true,
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "stress": "node stress.js"
+  },
+  "devDependencies": {
+    "colyseus.js": "^0.16.22"
   },
   "engines": {
     "node": ">=18"

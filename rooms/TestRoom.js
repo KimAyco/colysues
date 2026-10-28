@@ -3,6 +3,9 @@ const { Schema, MapSchema, defineTypes } = require("@colyseus/schema");
 
 const WORLD = 1000;
 
+// live counters exposed through /stats for the stress tester
+const stats = { ccu: 0, rooms: 0 };
+
 class Player extends Schema {}
 defineTypes(Player, {
   x: "number",
@@ -22,9 +25,10 @@ defineTypes(State, {
 });
 
 class TestRoom extends Room {
-  maxClients = 50;
+  maxClients = Number(process.env.MAX_CLIENTS) || 200;
 
   onCreate() {
+    stats.rooms++;
     this.setState(new State());
     this.setPatchRate(33); // ~30 state patches per second
 
@@ -40,6 +44,7 @@ class TestRoom extends Room {
   }
 
   onJoin(client) {
+    stats.ccu++;
     const p = new Player();
     p.x = WORLD / 2;
     p.y = WORLD / 2;
@@ -49,8 +54,13 @@ class TestRoom extends Room {
   }
 
   onLeave(client) {
+    stats.ccu--;
     this.state.players.delete(client.sessionId);
+  }
+
+  onDispose() {
+    stats.rooms--;
   }
 }
 
-module.exports = { TestRoom };
+module.exports = { TestRoom, stats };
