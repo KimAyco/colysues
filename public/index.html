@@ -52,7 +52,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const canvas = $("c"), ctx = canvas.getContext("2d");
-const WORLD = 1000, SEND_MS = 50, PING_MS = 1000, WINDOW = 60;
+const WORLD = 1000, SEND_MS = 33, PING_MS = 1000, WINDOW = 60;
 
 let room = null, myId = null, botOn = false;
 let rtts = [], lost = 0, pendingPings = new Map(), patches = 0;
@@ -99,11 +99,6 @@ setInterval(() => {
 
 setInterval(() => {
   if (!room) return;
-  if (botOn) {
-    const a = performance.now() / 1000;
-    target.x = WORLD / 2 + Math.cos(a) * 300;
-    target.y = WORLD / 2 + Math.sin(a) * 300;
-  }
   room.send("move", { x: target.x, y: target.y });
 }, SEND_MS);
 
@@ -140,26 +135,45 @@ document.querySelectorAll("[data-dir]").forEach(btn => {
 let lastTick = performance.now();
 setInterval(() => {
   const now = performance.now(), dt = (now - lastTick) / 1000; lastTick = now;
-  if (botOn) return;
+  if (botOn) {
+    const a = now / 1000;
+    target.x = WORLD / 2 + Math.cos(a) * 300;
+    target.y = WORLD / 2 + Math.sin(a) * 300;
+    return;
+  }
   target.x = Math.max(0, Math.min(WORLD, target.x + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * SPEED * dt));
   target.y = Math.max(0, Math.min(WORLD, target.y + ((held.down ? 1 : 0) - (held.up ? 1 : 0)) * SPEED * dt));
 }, 16);
 $("bot").onclick = () => { botOn = !botOn; $("bot").textContent = "Auto-move bot: " + (botOn ? "on" : "off"); };
 
-function draw() {
+// Smooth rendering: your own dot is drawn from local input (no network wait);
+// other players ease toward their latest server position every frame.
+const shown = new Map();
+const SMOOTH = 14; // higher = snappier, lower = smoother
+let lastFrame = performance.now();
+function draw(now = performance.now()) {
   requestAnimationFrame(draw);
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  const ease = 1 - Math.exp(-SMOOTH * dt);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const k = canvas.width / WORLD;
   let n = 0;
+  const seen = new Set();
   if (room && room.state && room.state.players) room.state.players.forEach((p, id) => {
-    n++;
+    n++; seen.add(id);
+    const me = id === myId;
+    let s = shown.get(id);
+    if (!s) { s = { x: p.x, y: p.y }; shown.set(id, s); }
+    if (me) { s.x = target.x; s.y = target.y; }
+    else { s.x += (p.x - s.x) * ease; s.y += (p.y - s.y) * ease; }
     ctx.beginPath();
-    ctx.arc(p.x * k, p.y * k, id === myId ? 10 : 8, 0, Math.PI * 2);
+    ctx.arc(s.x * k, s.y * k, me ? 10 : 8, 0, Math.PI * 2);
     ctx.fillStyle = p.color; ctx.fill();
-    if (id === myId) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+    if (me) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
     ctx.fillStyle = "#c9ced9"; ctx.font = "12px system-ui";
-    ctx.fillText(p.name + (id === myId ? " (you)" : ""), p.x * k + 12, p.y * k + 4);
+    ctx.fillText(p.name + (me ? " (you)" : ""), s.x * k + 12, s.y * k + 4);
   });
+  for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
   $("players").textContent = n;
 }
 draw();

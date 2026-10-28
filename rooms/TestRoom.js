@@ -26,7 +26,7 @@ class TestRoom extends Room {
 
   onCreate() {
     this.setState(new State());
-    this.setPatchRate(50); // 20 state patches per second
+    this.setPatchRate(33); // ~30 state patches per second
 
     this.onMessage("move", (client, msg) => {
       const p = this.state.players.get(client.sessionId);
