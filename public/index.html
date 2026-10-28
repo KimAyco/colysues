@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colyseus Latency Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0f1115; color: #e6e6e6; font: 14px system-ui, sans-serif; }
+  #wrap { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
+  canvas { background: #171a21; border: 1px solid #2a2f3a; border-radius: 8px; touch-action: none;
+           width: min(100%, 600px); aspect-ratio: 1; }
+  #panel { min-width: 240px; flex: 1; }
+  table { border-collapse: collapse; width: 100%; max-width: 320px; }
+  td { padding: 4px 8px; border-bottom: 1px solid #222733; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  button { background: #2a2f3a; color: inherit; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; margin-top: 12px; }
+  #status.ok { color: #6fdc8c; } #status.bad { color: #ff6b6b; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="600" height="600"></canvas>
+  <div id="panel">
+    <h3 style="margin-top:0">Latency</h3>
+    <table>
+      <tr><td>Status</td><td id="status">connecting…</td></tr>
+      <tr><td>RTT last</td><td id="last">–</td></tr>
+      <tr><td>RTT avg</td><td id="avg">–</td></tr>
+      <tr><td>RTT min / max</td><td id="minmax">–</td></tr>
+      <tr><td>RTT p95</td><td id="p95">–</td></tr>
+      <tr><td>Jitter</td><td id="jitter">–</td></tr>
+      <tr><td>Pings lost</td><td id="lost">0</td></tr>
+      <tr><td>State patches/s</td><td id="pps">0</td></tr>
+      <tr><td>Players</td><td id="players">0</td></tr>
+      <tr><td>Connect time</td><td id="conn">–</td></tr>
+    </table>
+    <button id="bot">Auto-move bot: off</button>
+    <p style="color:#8a90a0">Move the mouse / finger over the canvas. Open in several tabs or devices to see each other's dots.</p>
+  </div>
+</div>
+<script src="https://unpkg.com/colyseus.js@0.16.22/dist/colyseus.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $("c"), ctx = canvas.getContext("2d");
+const WORLD = 1000, SEND_MS = 50, PING_MS = 1000, WINDOW = 60;
+
+let room = null, myId = null, botOn = false;
+let rtts = [], lost = 0, pendingPings = new Map(), patches = 0;
+const target = { x: WORLD / 2, y: WORLD / 2 };
+
+const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+const fmt = v => v == null ? "–" : v.toFixed(1) + " ms";
+
+function setStatus(text, ok) { const s = $("status"); s.textContent = text; s.className = ok ? "ok" : "bad"; }
+
+async function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const client = new Colyseus.Client(`${proto}://${location.host}`);
+  const t0 = performance.now();
+  try {
+    room = await client.joinOrCreate("game");
+  } catch (e) {
+    setStatus("failed: " + (e.message || e), false);
+    setTimeout(connect, 3000);
+    return;
+  }
+  $("conn").textContent = fmt(performance.now() - t0);
+  myId = room.sessionId;
+  setStatus("connected", true);
+
+  room.onMessage("pong", t => {
+    if (!pendingPings.has(t)) return;
+    pendingPings.delete(t);
+    rtts.push(performance.now() - t);
+    if (rtts.length > WINDOW) rtts.shift();
+  });
+  room.onStateChange(() => { patches++; });
+  room.onLeave(() => { setStatus("disconnected – retrying", false); room = null; setTimeout(connect, 2000); });
+  room.onError((c, m) => setStatus("error " + c + " " + m, false));
+}
+
+setInterval(() => {
+  if (!room) return;
+  const t = performance.now();
+  pendingPings.set(t, true);
+  for (const k of pendingPings.keys()) if (t - k > 5000) { pendingPings.delete(k); lost++; }
+  room.send("ping", t);
+}, PING_MS);
+
+setInterval(() => {
+  if (!room) return;
+  if (botOn) {
+    const a = performance.now() / 1000;
+    target.x = WORLD / 2 + Math.cos(a) * 300;
+    target.y = WORLD / 2 + Math.sin(a) * 300;
+  }
+  room.send("move", { x: target.x, y: target.y });
+}, SEND_MS);
+
+setInterval(() => {
+  $("pps").textContent = patches; patches = 0;
+  $("lost").textContent = lost;
+  if (rtts.length) {
+    const avg = rtts.reduce((a, b) => a + b, 0) / rtts.length;
+    const jit = rtts.length > 1 ? rtts.slice(1).reduce((a, v, i) => a + Math.abs(v - rtts[i]), 0) / (rtts.length - 1) : 0;
+    $("last").textContent = fmt(rtts[rtts.length - 1]);
+    $("avg").textContent = fmt(avg);
+    $("minmax").textContent = `${Math.min(...rtts).toFixed(1)} / ${Math.max(...rtts).toFixed(1)}`;
+    $("p95").textContent = fmt(pct(rtts, 0.95));
+    $("jitter").textContent = fmt(jit);
+  }
+}, 1000);
+
+function setTarget(e) {
+  const r = canvas.getBoundingClientRect();
+  target.x = ((e.clientX - r.left) / r.width) * WORLD;
+  target.y = ((e.clientY - r.top) / r.height) * WORLD;
+}
+canvas.addEventListener("pointermove", setTarget);
+canvas.addEventListener("pointerdown", setTarget);
+$("bot").onclick = () => { botOn = !botOn; $("bot").textContent = "Auto-move bot: " + (botOn ? "on" : "off"); };
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const k = canvas.width / WORLD;
+  let n = 0;
+  if (room) room.state.players.forEach((p, id) => {
+    n++;
+    ctx.beginPath();
+    ctx.arc(p.x * k, p.y * k, id === myId ? 10 : 8, 0, Math.PI * 2);
+    ctx.fillStyle = p.color; ctx.fill();
+    if (id === myId) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fillStyle = "#c9ced9"; ctx.font = "12px system-ui";
+    ctx.fillText(p.name + (id === myId ? " (you)" : ""), p.x * k + 12, p.y * k + 4);
+  });
+  $("players").textContent = n;
+  requestAnimationFrame(draw);
+}
+draw();
+connect();
+</script>
+</body>
+</html>
