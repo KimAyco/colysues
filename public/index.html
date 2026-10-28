@@ -18,6 +18,10 @@
   #dpad { display: grid; grid-template-areas: ". u ." "l . r" ". d ."; grid-template-columns: repeat(3, 64px);
           grid-auto-rows: 64px; gap: 6px; margin-top: 16px; }
   #dpad button { margin: 0; font-size: 22px; user-select: none; -webkit-user-select: none; touch-action: none; }
+  #sForm { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 320px; }
+  #sForm label { display: flex; flex-direction: column; gap: 2px; color: #8a90a0; font-size: 12px; }
+  #sForm input { background: #171a21; color: inherit; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; }
+  #sOut { margin-top: 12px; }
   #status.ok { color: #6fdc8c; } #status.bad { color: #ff6b6b; }
 </style>
 </head>
@@ -45,6 +49,27 @@
       <button data-dir="right" style="grid-area:r">▶</button>
       <button data-dir="down" style="grid-area:d">▼</button>
     </div>
+    <h3>Stress test</h3>
+    <div id="sForm">
+      <label>Players <input id="sPlayers" type="number" min="1" max="500" value="20"></label>
+      <label>Moves/s each <input id="sRate" type="number" min="1" max="60" value="20"></label>
+      <label>Hold (s) <input id="sDur" type="number" min="1" max="600" value="30"></label>
+      <label>Join/s <input id="sRamp" type="number" min="1" max="100" value="10"></label>
+    </div>
+    <button id="sBtn">Start stress test</button>
+    <table id="sOut">
+      <tr><td>State</td><td id="sState">idle</td></tr>
+      <tr><td>Bots connected</td><td id="sBots">0</td></tr>
+      <tr><td>Bot RTT p50 / p95</td><td id="sRtt">–</td></tr>
+      <tr><td>Bot RTT max</td><td id="sMax">–</td></tr>
+      <tr><td>Patches/s per bot</td><td id="sPps">–</td></tr>
+      <tr><td>Pings lost</td><td id="sLost">0</td></tr>
+      <tr><td>Join fails / drops</td><td id="sFail">0 / 0</td></tr>
+      <tr><td>Server CPU</td><td id="sCpu">–</td></tr>
+      <tr><td>Server loop lag p99</td><td id="sLag">–</td></tr>
+      <tr><td>Server memory</td><td id="sMem">–</td></tr>
+    </table>
+    <p style="color:#8a90a0">Keep this tab in the foreground while stress testing (background tabs get throttled).</p>
     <p style="color:#8a90a0">Move with WASD / arrow keys or the on-screen pad. Open in several tabs or devices to see each other's dots.</p>
   </div>
 </div>
@@ -146,6 +171,117 @@ setInterval(() => {
 }, 16);
 $("bot").onclick = () => { botOn = !botOn; $("bot").textContent = "Auto-move bot: " + (botOn ? "on" : "off"); };
 
+// ---- stress test: extra bot connections opened from this tab ----
+const st = { bots: [], token: 0, running: false, timers: [] };
+const wsProto = location.protocol === "https:" ? "wss" : "ws";
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const maxOf = a => a.length ? a.reduce((m, v) => v > m ? v : m, -Infinity) : null;
+let sWin, sAll, sCounters;
+const resetStress = () => { sWin = []; sAll = []; sCounters = { lost: 0, patches: 0, joinFail: 0, drops: 0 }; };
+resetStress();
+
+async function spawnStressBot(token) {
+  let r;
+  try { r = await new Colyseus.Client(`${wsProto}://${location.host}`).joinOrCreate("game"); }
+  catch { sCounters.joinFail++; return; }
+  if (token !== st.token) { try { r.leave(); } catch {} return; }
+  const b = { room: r, alive: true, pending: new Map(), x: Math.random() * WORLD, y: Math.random() * WORLD,
+              vx: (Math.random() - 0.5) * 300, vy: (Math.random() - 0.5) * 300 };
+  r.onMessage("pong", t => {
+    if (!b.pending.delete(t)) return;
+    const rtt = performance.now() - t;
+    sWin.push(rtt); sAll.push(rtt);
+  });
+  r.onStateChange(() => { sCounters.patches++; });
+  r.onLeave(() => { if (b.alive) { b.alive = false; sCounters.drops++; } });
+  r.onError(() => {});
+  st.bots.push(b);
+}
+
+async function fetchServerStats() {
+  try { return await (await fetch("/stats", { cache: "no-store" })).json(); } catch { return null; }
+}
+
+function stopStress(finished) {
+  st.token++; st.running = false;
+  st.timers.forEach(clearInterval); st.timers = [];
+  st.bots.forEach(b => { b.alive = false; try { b.room.leave(); } catch {} });
+  st.bots = [];
+  $("sBtn").textContent = "Start stress test";
+  $("sState").textContent = finished
+    ? `finished – RTT p50 ${fmt(pct(sAll, 0.5))}, p95 ${fmt(pct(sAll, 0.95))}, p99 ${fmt(pct(sAll, 0.99))}`
+    : "stopped";
+  $("sBots").textContent = "0";
+}
+
+async function startStress() {
+  const n = Math.max(1, Number($("sPlayers").value) || 1);
+  const rate = Math.max(1, Number($("sRate").value) || 1);
+  const dur = Math.max(1, Number($("sDur").value) || 1);
+  const ramp = Math.max(1, Number($("sRamp").value) || 1);
+  resetStress();
+  const token = ++st.token;
+  st.running = true;
+  $("sBtn").textContent = "Stop";
+  $("sState").textContent = "joining players…";
+  fetchServerStats(); // resets the server's measurement window
+
+  let last = performance.now();
+  st.timers.push(setInterval(() => {
+    const now = performance.now(), dt = (now - last) / 1000; last = now;
+    for (const b of st.bots) {
+      if (!b.alive) continue;
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      if (b.x < 0 || b.x > WORLD) { b.vx *= -1; b.x = Math.max(0, Math.min(WORLD, b.x)); }
+      if (b.y < 0 || b.y > WORLD) { b.vy *= -1; b.y = Math.max(0, Math.min(WORLD, b.y)); }
+      try { b.room.send("move", { x: b.x, y: b.y }); } catch {}
+    }
+  }, 1000 / rate));
+
+  st.timers.push(setInterval(() => {
+    const t = performance.now();
+    for (const b of st.bots) {
+      if (!b.alive) continue;
+      for (const k of b.pending.keys()) if (t - k > 5000) { b.pending.delete(k); sCounters.lost++; }
+      b.pending.set(t, true);
+      try { b.room.send("ping", t); } catch {}
+    }
+  }, PING_MS));
+
+  st.timers.push(setInterval(async () => {
+    const win = sWin; sWin = [];
+    const p = sCounters.patches; sCounters.patches = 0;
+    const alive = st.bots.filter(b => b.alive).length;
+    $("sBots").textContent = `${alive} / ${n}`;
+    $("sRtt").textContent = win.length ? `${fmt(pct(win, 0.5))} / ${fmt(pct(win, 0.95))}` : "–";
+    $("sMax").textContent = win.length ? fmt(maxOf(win)) : "–";
+    $("sPps").textContent = alive ? (p / alive).toFixed(1) : "–";
+    $("sLost").textContent = sCounters.lost;
+    $("sFail").textContent = `${sCounters.joinFail} / ${sCounters.drops}`;
+    const s = await fetchServerStats();
+    if (s && token === st.token) {
+      $("sCpu").textContent = s.cpuPercent.toFixed(0) + " %";
+      $("sLag").textContent = fmt(s.loopLagP99Ms);
+      $("sMem").textContent = s.rssMB.toFixed(0) + " MB";
+    }
+  }, 1000));
+
+  let spawned = 0;
+  while (spawned < n && token === st.token) {
+    const batch = Math.min(ramp, n - spawned);
+    await Promise.all(Array.from({ length: batch }, () => spawnStressBot(token)));
+    spawned += batch;
+    if (spawned < n) await sleep(1000);
+  }
+  if (token !== st.token) return;
+  for (let s = dur; s > 0 && token === st.token; s--) {
+    $("sState").textContent = `running – ${s}s left`;
+    await sleep(1000);
+  }
+  if (token === st.token) stopStress(true);
+}
+$("sBtn").onclick = () => (st.running ? stopStress(false) : startStress());
+
 // Smooth rendering: your own dot is drawn from local input (no network wait);
 // other players ease toward their latest server position every frame.
 const shown = new Map();
@@ -170,8 +306,10 @@ function draw(now = performance.now()) {
     ctx.arc(s.x * k, s.y * k, me ? 10 : 8, 0, Math.PI * 2);
     ctx.fillStyle = p.color; ctx.fill();
     if (me) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
-    ctx.fillStyle = "#c9ced9"; ctx.font = "12px system-ui";
-    ctx.fillText(p.name + (me ? " (you)" : ""), s.x * k + 12, s.y * k + 4);
+    if (me || room.state.players.size <= 12) {
+      ctx.fillStyle = "#c9ced9"; ctx.font = "12px system-ui";
+      ctx.fillText(p.name + (me ? " (you)" : ""), s.x * k + 12, s.y * k + 4);
+    }
   });
   for (const id of shown.keys()) if (!seen.has(id)) shown.delete(id);
   $("players").textContent = n;
