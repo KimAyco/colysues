@@ -6,3 +6,6 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        sync: false # set in the Render dashboard to the game's URL, e.g. https://fishgame.vercel.app
