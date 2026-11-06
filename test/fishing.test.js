@@ -218,7 +218,7 @@ test("database health checks the configured PHP API", async () => {
     gameApiUrl: "https://tempdatabase.free.nf/APIdatabase",
     fetchImpl: async (url) => {
       requestedUrl = String(url);
-      return Response.json({ status: "ok", database: "connected", maps: 16 });
+      return Response.json({ success: true, data: { status: "ok", database: "connected", maps: 16 } });
     },
   });
   const srv = http.createServer(app);
@@ -231,6 +231,34 @@ test("database health checks the configured PHP API", async () => {
   } finally {
     await new Promise((resolve) => srv.close(resolve));
   }
+});
+
+test("game API client solves the host browser check and retries with ?i=1", async () => {
+  const crypto = require("node:crypto");
+  const { createGameApi } = require("../rooms/gameApi");
+  const key = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(16);
+  const secret = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-128-cbc", key, iv);
+  cipher.setAutoPadding(false);
+  const enc = Buffer.concat([cipher.update(secret), cipher.final()]).toString("hex");
+  const page = `<script>var a=toNumbers("${key.toString("hex")}"),b=toNumbers("${iv.toString("hex")}"),c=toNumbers("${enc}");</script>`;
+  const seen = [];
+  const api = createGameApi({
+    baseUrl: "https://example.test/APIdatabase",
+    fetchImpl: async (url, init) => {
+      seen.push({ url: String(url), cookie: init.headers.Cookie });
+      return init.headers.Cookie
+        ? Response.json({ success: true, data: { status: "ok", database: "connected", maps: 16 } })
+        : new Response(page, { headers: { "content-type": "text/html" } });
+    },
+  });
+  assert.equal((await api.health()).maps, 16);
+  assert.equal(seen[0].url, "https://example.test/APIdatabase/health.php");
+  assert.equal(seen[1].url, "https://example.test/APIdatabase/health.php?i=1");
+  assert.equal(seen[1].cookie, `__test=${secret.toString("hex")}`);
+  await api.health();
+  assert.equal(seen.length, 3, "the solved cookie is reused");
 });
 
 test("database health reports missing configuration and blocked API responses", async () => {

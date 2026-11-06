@@ -11,3 +11,7 @@ services:
         sync: false # set in the Render dashboard to the game's URL, e.g. https://fishgame.vercel.app
       - key: GAME_API_URL
         sync: false # set to the PHP API folder URL, e.g. https://example.com/APIdatabase
+      - key: GAME_AUTH_SECRET
+        sync: false # must equal GAME_AUTH_SECRET on the PHP host (32+ characters)
+      - key: GAME_SERVICE_SECRET
+        sync: false # must equal GAME_SERVICE_SECRET on the PHP host; different from the auth secret

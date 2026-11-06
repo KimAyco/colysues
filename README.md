@@ -126,8 +126,16 @@ network blip does not drop them; `client.reconnect(room.reconnectionToken)` take
 | `PORT`                 | 2567    | port to listen on (Render sets this).                                                         |
 | `ALLOWED_ORIGINS`      | `*`     | comma-separated browser origins allowed to call the HTTP API and matchmaking, e.g. `https://fishgame.vercel.app`. Set it in production. |
 | `GAME_API_URL`         | unset    | Base URL of the PHP game API folder, e.g. `https://example.com/APIdatabase`. The landing page uses it for the database connection check. |
+| `GAME_AUTH_SECRET`     | unset    | Token secret shared with the PHP API (32+ characters). Required to join `"fishing"` rooms. |
+| `GAME_SERVICE_SECRET`  | unset    | Server-only key for trusted PHP writes such as `record-catch` (32+ characters, different from the auth secret). |
 | `FISHING_MAX_CLIENTS`  | 24       | players per `"fishing"` room.                                                                                   |
 | `MAX_CLIENTS`          | 200     | players per `"game"` (latency test) room.                                                     |
+
+## PHP API client
+
+`rooms/gameApi.js` is the server's client for `APIdatabase/`. It unwraps the `{ success, data }` envelope and
+works on InfinityFree: when the host answers with its JavaScript browser check, the client decrypts the token
+into the `__test` cookie and retries with `?i=1` (the cookie is cached). `GET /api/database-health` uses it.
 
 ## Tests
 

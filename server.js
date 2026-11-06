@@ -7,6 +7,7 @@ const { monitorEventLoopDelay } = require("perf_hooks");
 const { TestRoom, stats } = require("./rooms/TestRoom");
 const { FishingRoom } = require("./rooms/FishingRoom");
 const { MAPS } = require("./rooms/maps");
+const { createGameApi } = require("./rooms/gameApi");
 
 /**
  * Comma-separated origins allowed to call the HTTP API and matchmaking from a browser,
@@ -39,50 +40,17 @@ function createApp(allowedOrigins, { gameApiUrl = process.env.GAME_API_URL, fetc
   app.get("/health", (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
 
   app.get("/api/database-health", async (_req, res) => {
-    if (!gameApiUrl) {
-      return res.status(503).json({ ok: false, error: "GAME_API_URL is not configured on the Colyseus server." });
-    }
-
-    let healthUrl;
+    const api = createGameApi({ baseUrl: gameApiUrl, fetchImpl });
     try {
-      const baseUrl = new URL(gameApiUrl);
-      if (!["http:", "https:"].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
-        throw new Error("invalid API URL");
+      const data = await api.health();
+      if (data?.status !== "ok" || data?.database !== "connected") {
+        return res.status(503).json({ ok: false, error: "The PHP API reported that the database is not connected." });
       }
-      healthUrl = new URL("health.php", `${baseUrl.href.replace(/\/+$/, "")}/`);
-    } catch {
-      return res.status(503).json({ ok: false, error: "GAME_API_URL must be a valid HTTP(S) URL to the PHP API folder." });
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetchImpl(healthUrl, { signal: controller.signal, headers: { Accept: "application/json" } });
-      let payload;
-      try {
-        payload = await response.json();
-      } catch {
-        const error = `The PHP API returned a non-JSON response (HTTP ${response.status}). The host may be showing a browser check or blocking server requests.`;
-        console.error("[database-check]", error);
-        return res.status(502).json({ ok: false, error });
-      }
-
-      if (!response.ok || payload?.status !== "ok" || payload?.database !== "connected") {
-        const error = typeof payload?.error === "string"
-          ? payload.error
-          : `The PHP API or database check failed (HTTP ${response.status}).`;
-        return res.status(503).json({ ok: false, error });
-      }
-      return res.json({ ok: true, database: "connected", maps: Number(payload.maps) || 0 });
+      return res.json({ ok: true, database: "connected", maps: Number(data.maps) || 0 });
     } catch (error) {
-      const timedOut = error && error.name === "AbortError";
-      const message = timedOut
-        ? "The PHP API database check timed out after 8 seconds."
-        : "The Colyseus server could not reach the PHP API. Check its URL and hosting restrictions.";
-      console.error("[database-check]", message, error);
-      return res.status(502).json({ ok: false, error: message });
-    } finally {
-      clearTimeout(timeout);
+      console.error("[database-check]", error.message);
+      const status = !gameApiUrl || /GAME_API_URL/.test(error.message) ? 503 : error.status >= 400 && !error.blocked ? 503 : 502;
+      return res.status(status).json({ ok: false, error: error.message });
     }
   });
 
