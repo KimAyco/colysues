@@ -9,3 +9,5 @@ services:
     envVars:
       - key: ALLOWED_ORIGINS
         sync: false # set in the Render dashboard to the game's URL, e.g. https://fishgame.vercel.app
+      - key: GAME_API_URL
+        sync: false # set to the PHP API folder URL, e.g. https://example.com/APIdatabase

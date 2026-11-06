@@ -210,6 +210,57 @@ test("health endpoint and CORS", async () => {
   assert.equal(r.headers.get("access-control-allow-origin"), "*");
 });
 
+test("database health checks the configured PHP API", async () => {
+  const http = require("node:http");
+  const { createApp } = require("../server");
+  let requestedUrl;
+  const { app } = createApp(["*"], {
+    gameApiUrl: "https://tempdatabase.free.nf/APIdatabase",
+    fetchImpl: async (url) => {
+      requestedUrl = String(url);
+      return Response.json({ status: "ok", database: "connected", maps: 16 });
+    },
+  });
+  const srv = http.createServer(app);
+  await new Promise((resolve) => srv.listen(0, resolve));
+  try {
+    const response = await fetch(`http://localhost:${srv.address().port}/api/database-health`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, database: "connected", maps: 16 });
+    assert.equal(requestedUrl, "https://tempdatabase.free.nf/APIdatabase/health.php");
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
+test("database health reports missing configuration and blocked API responses", async () => {
+  const http = require("node:http");
+  const { createApp } = require("../server");
+  const apps = [
+    createApp(["*"]),
+    createApp(["*"], {
+      gameApiUrl: "https://tempdatabase.free.nf/APIdatabase",
+      fetchImpl: async () => new Response("<html>browser check</html>", {
+        status: 403,
+        headers: { "content-type": "text/html" },
+      }),
+    }),
+  ];
+  const servers = apps.map(({ app }) => http.createServer(app));
+  try {
+    for (const server of servers) await new Promise((resolve) => server.listen(0, resolve));
+    const missing = await fetch(`http://localhost:${servers[0].address().port}/api/database-health`);
+    assert.equal(missing.status, 503);
+    assert.match((await missing.json()).error, /GAME_API_URL/);
+
+    const blocked = await fetch(`http://localhost:${servers[1].address().port}/api/database-health`);
+    assert.equal(blocked.status, 502);
+    assert.match((await blocked.json()).error, /non-JSON response/);
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+  }
+});
+
 test("with an origin list, only listed origins get CORS headers", async () => {
   // just the Express app: Colyseus' matchmaker is process-wide, so a second Server here would clash
   const http = require("node:http");

@@ -23,6 +23,8 @@
   #sForm input { background: #171a21; color: inherit; border: 1px solid #2a2f3a; border-radius: 6px; padding: 6px; }
   #sOut { margin-top: 12px; }
   #status.ok { color: #6fdc8c; } #status.bad { color: #ff6b6b; }
+  #databaseStatus.ok { color: #6fdc8c; } #databaseStatus.bad { color: #ff6b6b; }
+  #databaseStatus { margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -42,6 +44,9 @@
       <tr><td>Players</td><td id="players">0</td></tr>
       <tr><td>Connect time</td><td id="conn">–</td></tr>
     </table>
+    <h3>Game database</h3>
+    <p>PHP API / MySQL: <span id="databaseStatus" role="status" aria-live="polite">checking…</span></p>
+    <button id="databaseCheck" type="button">Check database connection</button>
     <button id="bot">Auto-move bot: off</button>
     <div id="dpad">
       <button data-dir="up" style="grid-area:u">▲</button>
@@ -87,6 +92,29 @@ const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s[Mat
 const fmt = v => v == null ? "–" : v.toFixed(1) + " ms";
 
 function setStatus(text, ok) { const s = $("status"); s.textContent = text; s.className = ok ? "ok" : "bad"; }
+
+async function checkDatabase() {
+  const status = $("databaseStatus");
+  const button = $("databaseCheck");
+  status.textContent = "checking…";
+  status.className = "";
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/database-health", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `Check failed (HTTP ${response.status}).`);
+    status.textContent = `connected (${result.maps} maps)`;
+    status.className = "ok";
+  } catch (error) {
+    status.textContent = error.message || "Database check failed.";
+    status.className = "bad";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+ $("databaseCheck").onclick = checkDatabase;
+checkDatabase();
 
 async function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";

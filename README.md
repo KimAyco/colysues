@@ -115,6 +115,7 @@ network blip does not drop them; `client.reconnect(room.reconnectionToken)` take
 | endpoint        | returns                                                                                                         |
 | --------------- | --------------------------------------------------------------------------------------------------------------- |
 | `GET /health`   | `{ ok: true, uptime }`. Used by Render's health check and by the game to wake a sleeping server.                |
+| `GET /api/database-health` | Checks the configured PHP API `health.php` endpoint and reports whether its MySQL database is reachable. |
 | `GET /api/maps` | `[{ id, players, rooms }]`: live counts per map across public rooms. Private (code) rooms are not counted.      |
 | `GET /stats`    | server load for the stress tester (see above).                                                                  |
 
@@ -124,7 +125,8 @@ network blip does not drop them; `client.reconnect(room.reconnectionToken)` take
 | ---------------------- | ------- | --------------------------------------------------------------------------------------------- |
 | `PORT`                 | 2567    | port to listen on (Render sets this).                                                         |
 | `ALLOWED_ORIGINS`      | `*`     | comma-separated browser origins allowed to call the HTTP API and matchmaking, e.g. `https://fishgame.vercel.app`. Set it in production. |
-| `FISHING_MAX_CLIENTS`  | 24      | players per `"fishing"` room.                                                                 |
+| `GAME_API_URL`         | unset    | Base URL of the PHP game API folder, e.g. `https://example.com/APIdatabase`. The landing page uses it for the database connection check. |
+| `FISHING_MAX_CLIENTS`  | 24       | players per `"fishing"` room.                                                                                   |
 | `MAX_CLIENTS`          | 200     | players per `"game"` (latency test) room.                                                     |
 
 ## Tests
@@ -138,7 +140,7 @@ isolation, anti-teleport and clamping, name and chat cleaning, rate limits, room
 ## Deploying
 
 1. Push this repo to GitHub (`KimAyco/colysues`). Render redeploys from `render.yaml`.
-2. In the Render service's Environment tab set `ALLOWED_ORIGINS` to your game's URL (the Vercel domain).
+2. In the Render service's Environment tab set `ALLOWED_ORIGINS` to your game's URL (the Vercel domain) and `GAME_API_URL` to the URL of the PHP API folder.
 3. Give the game that server: in the Vercel project settings set `VITE_COLYSEUS_URL=wss://<your-service>.onrender.com`
    and redeploy the game. It must be `wss://` because the game is served over https.
 
