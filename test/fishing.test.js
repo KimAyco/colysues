@@ -261,13 +261,51 @@ test("game API client solves the host browser check and retries with ?i=1", asyn
   assert.equal(seen.length, 3, "the solved cookie is reused");
 });
 
+test("a POST solves the host browser check with a GET first, and reuses the cookie across clients", async () => {
+  const crypto = require("node:crypto");
+  const { createGameApi } = require("../rooms/gameApi");
+  const key = crypto.randomBytes(16), iv = crypto.randomBytes(16), secret = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv("aes-128-cbc", key, iv);
+  cipher.setAutoPadding(false);
+  const enc = Buffer.concat([cipher.update(secret), cipher.final()]).toString("hex");
+  const page = `<script>var a=toNumbers("${key.toString("hex")}"),b=toNumbers("${iv.toString("hex")}"),c=toNumbers("${enc}");</script>`;
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push(`${init.method} ${url}`);
+    if (!init.headers.Cookie) {
+      return init.method === "POST"
+        ? new Response(null, { status: 302, headers: { location: "/" } })
+        : new Response(page, { headers: { "content-type": "text/html" } });
+    }
+    return Response.json({ success: true, data: { write: "ok", readBack: true, rolledBack: true } });
+  };
+  const options = { baseUrl: "https://posttest.example/APIdatabase", serviceSecret: "k".repeat(40), fetchImpl };
+  assert.equal((await createGameApi(options).writeTest()).write, "ok");
+  assert.deepEqual(seen, [
+    "GET https://posttest.example/APIdatabase/health.php",
+    "POST https://posttest.example/APIdatabase/write_test.php?i=1",
+  ]);
+  seen.length = 0;
+  await createGameApi(options).writeTest(); // a brand-new client reuses the solved cookie
+  assert.deepEqual(seen, ["POST https://posttest.example/APIdatabase/write_test.php?i=1"]);
+});
+
+test("a redirect from the API host is reported with its destination", async () => {
+  const { createGameApi } = require("../rooms/gameApi");
+  const api = createGameApi({
+    baseUrl: "https://redirect.example/APIdatabase",
+    fetchImpl: async () => new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } }),
+  });
+  await assert.rejects(api.health(), /redirected the request \(HTTP 302 to https:\/\/elsewhere\.example\//);
+});
+
 test("database write test calls the PHP self-test with the service key", async () => {
   const http = require("node:http");
   const { createApp } = require("../server");
   process.env.GAME_SERVICE_SECRET = "s".repeat(40);
   let seen;
   const { app } = createApp(["*"], {
-    gameApiUrl: "https://example.test/APIdatabase",
+    gameApiUrl: "https://writetest.example/APIdatabase",
     fetchImpl: async (url, init) => {
       seen = { url: String(url), method: init.method, key: init.headers["X-Game-Service-Key"] };
       return Response.json({ success: true, data: { write: "ok", readBack: true, rolledBack: true } });
@@ -280,7 +318,7 @@ test("database write test calls the PHP self-test with the service key", async (
     const first = await fetch(base, { method: "POST" });
     assert.equal(first.status, 200);
     assert.deepEqual(await first.json(), { ok: true, write: "ok", readBack: true, rolledBack: true });
-    assert.equal(seen.url, "https://example.test/APIdatabase/write_test.php");
+    assert.equal(seen.url, "https://writetest.example/APIdatabase/write_test.php");
     assert.equal(seen.method, "POST");
     assert.equal(seen.key, "s".repeat(40));
     assert.equal((await fetch(base, { method: "POST" })).status, 429, "rapid repeats are throttled");

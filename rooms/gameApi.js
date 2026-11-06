@@ -14,6 +14,9 @@ const crypto = require("node:crypto");
 const CHALLENGE = /toNumbers\("([0-9a-f]+)"\)\s*,\s*b\s*=\s*toNumbers\("([0-9a-f]+)"\)\s*,\s*c\s*=\s*toNumbers\("([0-9a-f]+)"\)/i;
 const USER_AGENT = "Mozilla/5.0 (compatible; PixelFishingServer/1.0)";
 
+/** Solved browser-check cookies by API origin, shared by every client in this process. */
+const hostCookies = new Map();
+
 class GameApiError extends Error {
   constructor(message, { status = 0, blocked = false } = {}) {
     super(message);
@@ -55,11 +58,13 @@ function createGameApi({
   fetchImpl = fetch,
   timeoutMs = 8000,
 } = {}) {
-  let hostCookie = null;
-
   async function send(url, init) {
     const headers = { Accept: "application/json", "User-Agent": USER_AGENT, ...init.headers };
-    if (hostCookie) headers.Cookie = `__test=${hostCookie}`;
+    const cookie = hostCookies.get(url.origin);
+    if (cookie) {
+      headers.Cookie = `__test=${cookie}`;
+      url.searchParams.set("i", "1"); // the host expects this once the cookie is set
+    }
     const response = await fetchImpl(url, { ...init, headers, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     return { response, text: await response.text() };
   }
@@ -76,11 +81,17 @@ function createGameApi({
 
     let result;
     try {
+      // The host answers a cookie-less POST with a redirect instead of the challenge page, so
+      // solve the check with a GET first.
+      if (method !== "GET" && !hostCookies.has(url.origin)) {
+        const probe = await send(new URL("health.php", normalizeBaseUrl(baseUrl)), { method: "GET", headers: {} });
+        const solved = solveChallenge(probe.text);
+        if (solved) hostCookies.set(url.origin, solved);
+      }
       result = await send(url, init);
       const cookie = solveChallenge(result.text);
       if (cookie) {
-        hostCookie = cookie;
-        url.searchParams.set("i", "1");
+        hostCookies.set(url.origin, cookie);
         result = await send(url, init);
       }
     } catch (error) {
@@ -94,6 +105,13 @@ function createGameApi({
     }
 
     const { response, text } = result;
+    if (response.status >= 300 && response.status < 400) {
+      hostCookies.delete(url.origin); // maybe expired; solve again next time
+      throw new GameApiError(
+        `The PHP API redirected the request (HTTP ${response.status} to ${response.headers.get("location") || "an unknown address"}). The host may be blocking server requests, or the API URL needs https:// or a different path.`,
+        { status: response.status, blocked: true },
+      );
+    }
     let payload;
     try {
       payload = JSON.parse(text);
