@@ -69,7 +69,8 @@ function createGameApi({
     return { response, text: await response.text() };
   }
 
-  async function request(endpoint, { method = "GET", query = {}, headers = {}, body } = {}) {
+  /** Sends one request (solving the host browser check) and returns the raw { response, text }. */
+  async function exchange(endpoint, { method = "GET", query = {}, headers = {}, body } = {}) {
     if (!baseUrl) throw new GameApiError("GAME_API_URL is not configured on the Colyseus server.");
     const url = new URL(endpoint, normalizeBaseUrl(baseUrl));
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
@@ -104,7 +105,11 @@ function createGameApi({
       );
     }
 
-    const { response, text } = result;
+    return { response: result.response, text: result.text, url };
+  }
+
+  async function request(endpoint, options) {
+    const { response, text, url } = await exchange(endpoint, options);
     if (response.status >= 300 && response.status < 400) {
       hostCookies.delete(url.origin); // maybe expired; solve again next time
       throw new GameApiError(
@@ -130,6 +135,25 @@ function createGameApi({
   }
 
   return {
+    /**
+     * Relays a browser's request to the PHP API and returns { status, payload } with the API's own
+     * JSON, unchanged. Throws GameApiError if the host blocks the request or answers with non-JSON.
+     */
+    async forward(endpoint, options) {
+      const { response, text } = await exchange(endpoint, options);
+      if (response.status >= 300 && response.status < 400) {
+        hostCookies.delete(new URL(baseUrl).origin);
+        throw new GameApiError(`The PHP API redirected the request (HTTP ${response.status}).`, { status: response.status, blocked: true });
+      }
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        throw new GameApiError(`The PHP API returned a non-JSON response (HTTP ${response.status}).`, { status: response.status, blocked: true });
+      }
+      return { status: response.status, payload };
+    },
+
     /** { status: "ok", database: "connected", maps } */
     health: () => request("health.php"),
 

@@ -31,10 +31,39 @@ function createApp(allowedOrigins, { gameApiUrl = process.env.GAME_API_URL, fetc
       res.setHeader("Access-Control-Allow-Origin", allow);
       if (allow !== "*") res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
+  });
+
+  // Browser -> Colyseus -> PHP. A browser cannot pass a free host's JavaScript browser check on a
+  // cross-origin request, but this server can, so the game's account/save calls go through here.
+  // Only the bearer token and JSON body are relayed; the game-service key never leaves this server.
+  const PROXIED = new Set(["auth.php", "game.php", "maps.php", "health.php"]);
+  const jsonBody = express.json({ limit: "64kb" });
+  app.all("/api/db/:file", jsonBody, async (req, res) => {
+    const file = req.params.file;
+    if (!PROXIED.has(file)) return res.status(404).json({ success: false, error: "Unknown API endpoint" });
+    if (!["GET", "POST"].includes(req.method)) return res.status(405).json({ success: false, error: "Method not allowed" });
+
+    const query = {};
+    for (const [key, value] of Object.entries(req.query)) {
+      if (key !== "i" && typeof value === "string") query[key] = value;
+    }
+    const headers = {};
+    if (typeof req.headers.authorization === "string") headers.Authorization = req.headers.authorization;
+    const hasBody = req.method === "POST";
+
+    try {
+      const api = createGameApi({ baseUrl: gameApiUrl, fetchImpl });
+      const { status, payload } = await api.forward(file, { method: req.method, query, headers, body: hasBody ? req.body ?? {} : undefined });
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(status).json(payload);
+    } catch (error) {
+      console.error("[api-proxy]", file, error.message);
+      return res.status(502).json({ success: false, error: "The game database is unreachable right now." });
+    }
   });
 
   app.get("/health", (_req, res) => res.json({ ok: true, uptime: process.uptime() }));

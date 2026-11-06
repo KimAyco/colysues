@@ -131,6 +131,13 @@ network blip does not drop them; `client.reconnect(room.reconnectionToken)` take
 | `FISHING_MAX_CLIENTS`  | 24       | players per `"fishing"` room.                                                                                   |
 | `MAX_CLIENTS`          | 200     | players per `"game"` (latency test) room.                                                     |
 
+## Game API proxy
+
+`/api/db/auth.php`, `/api/db/game.php` and `/api/db/maps.php` relay the game's account and save calls to the
+PHP API. The browser cannot pass a free host's JavaScript browser check, but this server can. Point the game at
+it with `VITE_GAME_API_URL=https://<your-service>.onrender.com/api/db`. Only the bearer token and JSON body are
+relayed; the service key never leaves the server and other PHP files are not exposed.
+
 ## PHP API client
 
 `rooms/gameApi.js` is the server's client for `APIdatabase/`. It unwraps the `{ success, data }` envelope and

@@ -299,6 +299,45 @@ test("a redirect from the API host is reported with its destination", async () =
   await assert.rejects(api.health(), /redirected the request \(HTTP 302 to https:\/\/elsewhere\.example\//);
 });
 
+test("the game API proxy relays calls to PHP and only the token and JSON body", async () => {
+  const http = require("node:http");
+  const { createApp } = require("../server");
+  const calls = [];
+  const { app } = createApp(["https://fishgame.vercel.app"], {
+    gameApiUrl: "https://proxytest.example/APIdatabase",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
+      return Response.json({ success: false, error: "Invalid credentials" }, { status: 401 });
+    },
+  });
+  const srv = http.createServer(app);
+  await new Promise((resolve) => srv.listen(0, resolve));
+  const base = `http://localhost:${srv.address().port}/api/db`;
+  try {
+    const login = await fetch(`${base}/auth.php?action=login&i=9`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer abc.def.ghi", "X-Game-Service-Key": "stolen", Origin: "https://fishgame.vercel.app" },
+      body: JSON.stringify({ username: "kimayco", password: "password1" }),
+    });
+    assert.equal(login.status, 401, "the PHP status and JSON are passed through");
+    assert.deepEqual(await login.json(), { success: false, error: "Invalid credentials" });
+    assert.equal(login.headers.get("access-control-allow-origin"), "https://fishgame.vercel.app");
+    const sent = calls.find((c) => c.method === "POST");
+    assert.equal(sent.url, "https://proxytest.example/APIdatabase/auth.php?action=login");
+    assert.equal(sent.headers.Authorization, "Bearer abc.def.ghi");
+    assert.equal(sent.headers["X-Game-Service-Key"], undefined, "a client-supplied service key is never forwarded");
+    assert.deepEqual(JSON.parse(sent.body), { username: "kimayco", password: "password1" });
+
+    assert.equal((await fetch(`${base}/write_test.php`, { method: "POST" })).status, 404, "unlisted PHP files are not proxied");
+    assert.equal((await fetch(`${base}/db_config.php`)).status, 404);
+    const preflight = await fetch(`${base}/game.php`, { method: "OPTIONS", headers: { Origin: "https://fishgame.vercel.app" } });
+    assert.equal(preflight.status, 204);
+    assert.match(preflight.headers.get("access-control-allow-headers"), /Authorization/);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
 test("database write test calls the PHP self-test with the service key", async () => {
   const http = require("node:http");
   const { createApp } = require("../server");
