@@ -1,8 +1,9 @@
 const { Room, ServerError } = require("colyseus");
 const { verifyGameToken } = require("./auth");
-const { sanitizeName, sanitizeChat, hueFromId, TokenBucket } = require("./validate");
+const { sanitizeName, sanitizeChat, hueFromAccountId, TokenBucket } = require("./validate");
 
 const rooms = new Set();
+const RARITIES = new Set(["common", "uncommon", "rare", "epic", "legendary"]);
 
 class WorldChatRoom extends Room {
   maxClients = Number(process.env.WORLD_CHAT_MAX_CLIENTS) || 500;
@@ -28,7 +29,7 @@ class WorldChatRoom extends Room {
     if (!auth || !Number.isSafeInteger(auth.accountId)) throw new ServerError(4002, "authentication required");
     this.accounts.set(client.sessionId, {
       name: sanitizeName(auth.username, "Angler-" + client.sessionId.slice(0, 4)),
-      hue: hueFromId(String(auth.accountId)),
+      hue: hueFromAccountId(auth.accountId),
     });
     this.buckets.set(client.sessionId, new TokenBucket(1, 2));
     this.catchBuckets.set(client.sessionId, new TokenBucket(0.5, 2));
@@ -62,16 +63,19 @@ class WorldChatRoom extends Room {
     const account = this.accounts.get(client.sessionId);
     const bucket = this.catchBuckets.get(client.sessionId);
     const fishName = sanitizeChat(payload.fishName).slice(0, 48);
-    if (!account || !bucket || !fishName || !bucket.take()) return;
+    const rarity = typeof payload.rarity === "string" ? payload.rarity.toLowerCase() : "";
+    if (!account || !bucket || !fishName || !RARITIES.has(rarity) || !bucket.take()) return;
     const size = Number.isFinite(payload.size) && payload.size > 0 && payload.size <= 1000
       ? ` (${Math.round(payload.size)} cm)`
       : "";
+    const rarityLabel = rarity[0].toUpperCase() + rarity.slice(1);
     this.broadcastWorldMessage({
       id: client.sessionId,
       name: account.name,
       hue: account.hue,
       kind: "catch",
-      text: `caught a ${fishName}${size}!`,
+      rarity,
+      text: `caught a ${rarityLabel} ${fishName}${size}!`,
       at: Date.now(),
     });
   }

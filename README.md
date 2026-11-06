@@ -46,9 +46,9 @@ The old `"game"` room above is untouched, so the latency page and `stress.js` st
 The authenticated `"world-chat"` room is shared by every map. Clients send `{ text }` using the
 `chat` message type; the server broadcasts cleaned messages as `world-chat` events and rate-limits each
 connection to about one message per second. Messages carry a stable account-based hue for name colors.
-After a saved catch, clients can send `{ fishName, size }` using the `catch` message type; catch
-announcements have their own rate limit. The existing `chat` message in `"fishing"` remains for short
-chat bubbles between players in the same room.
+After a saved catch, clients send `{ fishName, rarity, size }` using the `catch` message type. The
+announcement includes rarity and has its own rate limit. The existing `chat` message in `"fishing"`
+remains for short chat bubbles between players in the same room.
 
 The game is hosted on Vercel and this server on Render. Vercel cannot hold WebSocket connections,
 so the browser connects here directly over `wss://`.

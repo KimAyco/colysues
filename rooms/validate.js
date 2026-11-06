@@ -30,6 +30,11 @@ function sanitizeChat(raw) {
 /** Room code for private friend rooms: empty (public) or up to 12 letters/digits. */
 const isValidCode = (c) => typeof c === "string" && /^[A-Z0-9]{0,12}$/.test(c);
 
+/** Spread sequential account IDs around the hue wheel for clearly distinct name colors. */
+function hueFromAccountId(id) {
+  return Math.round(((id - 1) * 137.508 + 18) % 360);
+}
+
 /** Stable colour for a session, 0..359. */
 function hueFromId(id) {
   let h = 0;
@@ -55,4 +60,4 @@ class TokenBucket {
   }
 }
 
-module.exports = { DIRS, FISH_STATES, EMOTES, num, clamp, sanitizeName, sanitizeChat, isValidCode, hueFromId, TokenBucket };
+module.exports = { DIRS, FISH_STATES, EMOTES, num, clamp, sanitizeName, sanitizeChat, isValidCode, hueFromId, hueFromAccountId, TokenBucket };
