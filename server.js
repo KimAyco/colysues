@@ -30,7 +30,7 @@ function createApp(allowedOrigins, { gameApiUrl = process.env.GAME_API_URL, fetc
     if (allow) {
       res.setHeader("Access-Control-Allow-Origin", allow);
       if (allow !== "*") res.setHeader("Vary", "Origin");
-      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     }
     if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -50,6 +50,29 @@ function createApp(allowedOrigins, { gameApiUrl = process.env.GAME_API_URL, fetc
     } catch (error) {
       console.error("[database-check]", error.message);
       const status = !gameApiUrl || /GAME_API_URL/.test(error.message) ? 503 : error.status >= 400 && !error.blocked ? 503 : 502;
+      return res.status(status).json({ ok: false, error: error.message });
+    }
+  });
+
+  // Proves the PHP API can write to MySQL. The PHP side rolls the test row back, but the route still
+  // costs a database round trip, so it is throttled and a failed run never reveals secrets.
+  let lastWriteTest = 0;
+  app.post("/api/database-write-test", async (_req, res) => {
+    const now = Date.now();
+    if (now - lastWriteTest < 5000) {
+      return res.status(429).json({ ok: false, error: "Wait a few seconds before running the write test again." });
+    }
+    lastWriteTest = now;
+    const api = createGameApi({ baseUrl: gameApiUrl, fetchImpl });
+    try {
+      const data = await api.writeTest();
+      if (data?.write !== "ok" || data?.readBack !== true) {
+        return res.status(503).json({ ok: false, error: "The PHP API did not confirm the database write." });
+      }
+      return res.json({ ok: true, write: "ok", readBack: true, rolledBack: data.rolledBack === true });
+    } catch (error) {
+      console.error("[database-write-test]", error.message);
+      const status = /GAME_(API_URL|SERVICE_SECRET)/.test(error.message) ? 503 : error.blocked || !error.status ? 502 : 503;
       return res.status(status).json({ ok: false, error: error.message });
     }
   });

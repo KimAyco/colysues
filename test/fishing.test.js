@@ -261,6 +261,35 @@ test("game API client solves the host browser check and retries with ?i=1", asyn
   assert.equal(seen.length, 3, "the solved cookie is reused");
 });
 
+test("database write test calls the PHP self-test with the service key", async () => {
+  const http = require("node:http");
+  const { createApp } = require("../server");
+  process.env.GAME_SERVICE_SECRET = "s".repeat(40);
+  let seen;
+  const { app } = createApp(["*"], {
+    gameApiUrl: "https://example.test/APIdatabase",
+    fetchImpl: async (url, init) => {
+      seen = { url: String(url), method: init.method, key: init.headers["X-Game-Service-Key"] };
+      return Response.json({ success: true, data: { write: "ok", readBack: true, rolledBack: true } });
+    },
+  });
+  const srv = http.createServer(app);
+  await new Promise((resolve) => srv.listen(0, resolve));
+  try {
+    const base = `http://localhost:${srv.address().port}/api/database-write-test`;
+    const first = await fetch(base, { method: "POST" });
+    assert.equal(first.status, 200);
+    assert.deepEqual(await first.json(), { ok: true, write: "ok", readBack: true, rolledBack: true });
+    assert.equal(seen.url, "https://example.test/APIdatabase/write_test.php");
+    assert.equal(seen.method, "POST");
+    assert.equal(seen.key, "s".repeat(40));
+    assert.equal((await fetch(base, { method: "POST" })).status, 429, "rapid repeats are throttled");
+  } finally {
+    delete process.env.GAME_SERVICE_SECRET;
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
 test("database health reports missing configuration and blocked API responses", async () => {
   const http = require("node:http");
   const { createApp } = require("../server");

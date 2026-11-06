@@ -115,6 +115,14 @@ function createGameApi({
     /** { status: "ok", database: "connected", maps } */
     health: () => request("health.php"),
 
+    /** Inserts a throwaway row, reads it back and rolls back. { write: "ok", readBack, rolledBack } */
+    writeTest() {
+      if (typeof serviceSecret !== "string" || serviceSecret.length < 32) {
+        throw new GameApiError("GAME_SERVICE_SECRET must be configured with at least 32 characters.");
+      }
+      return request("write_test.php", { method: "POST", headers: { "X-Game-Service-Key": serviceSecret }, body: {} });
+    },
+
     /** Trusted server-only catch write; needs GAME_SERVICE_SECRET to match the PHP host. */
     recordCatch({ accountId, fishId, mapId, zoneId, size, quality }) {
       if (typeof serviceSecret !== "string" || serviceSecret.length < 32) {

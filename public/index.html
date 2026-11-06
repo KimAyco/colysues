@@ -25,6 +25,7 @@
   #status.ok { color: #6fdc8c; } #status.bad { color: #ff6b6b; }
   #databaseStatus.ok { color: #6fdc8c; } #databaseStatus.bad { color: #ff6b6b; }
   #databaseStatus { margin-left: 8px; }
+  #databaseWriteStatus.ok { color: #6fdc8c; } #databaseWriteStatus.bad { color: #ff6b6b; }
 </style>
 </head>
 <body>
@@ -47,6 +48,8 @@
     <h3>Game database</h3>
     <p>PHP API / MySQL: <span id="databaseStatus" role="status" aria-live="polite">checking…</span></p>
     <button id="databaseCheck" type="button">Check database connection</button>
+    <button id="databaseWrite" type="button">Test database write</button>
+    <p id="databaseWriteStatus" role="status" aria-live="polite"></p>
     <button id="bot">Auto-move bot: off</button>
     <div id="dpad">
       <button data-dir="up" style="grid-area:u">▲</button>
@@ -113,7 +116,28 @@ async function checkDatabase() {
   }
 }
 
+async function testDatabaseWrite() {
+  const status = $("databaseWriteStatus");
+  const button = $("databaseWrite");
+  status.textContent = "writing…";
+  status.className = "";
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/database-write-test", { method: "POST", cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || `Write test failed (HTTP ${response.status}).`);
+    status.textContent = "Write OK: a test row was inserted, read back and rolled back (nothing kept).";
+    status.className = "ok";
+  } catch (error) {
+    status.textContent = error.message || "Write test failed.";
+    status.className = "bad";
+  } finally {
+    button.disabled = false;
+  }
+}
+
  $("databaseCheck").onclick = checkDatabase;
+ $("databaseWrite").onclick = testDatabaseWrite;
 checkDatabase();
 
 async function connect() {
