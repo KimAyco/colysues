@@ -148,7 +148,22 @@ test("world chat reaches players on different maps and sanitizes messages", asyn
   assert.deepEqual(otherChat.messages[0], anglerChat.messages[0]);
   assert.equal(otherChat.messages[0].name, "Ann");
   assert.equal(otherChat.messages[0].text, "hello world");
+  assert.equal(otherChat.messages[0].kind, "chat");
+  assert.ok(Number.isInteger(otherChat.messages[0].hue));
   assert.ok(Number.isFinite(otherChat.messages[0].at));
+
+  anglerChat.room.send("catch", { fishName: "Bluefin Tuna", size: 42.6 });
+  await waitFor(() => otherChat.messages.length === 2);
+  await waitFor(() => thirdChat.messages.length === 2);
+  assert.equal(otherChat.messages[1].name, "Ann");
+  assert.equal(otherChat.messages[1].text, "caught a Bluefin Tuna (43 cm)!");
+  assert.equal(otherChat.messages[1].kind, "catch");
+  assert.equal(otherChat.messages[1].hue, otherChat.messages[0].hue);
+  assert.equal(thirdChat.messages[1].text, otherChat.messages[1].text);
+
+  otherChat.room.send("chat", { text: "Bob is here" });
+  await waitFor(() => anglerChat.messages.length === 3);
+  assert.notEqual(anglerChat.messages[2].hue, anglerChat.messages[0].hue);
 });
 
 test("world chat requires a valid signed account token", async () => {
