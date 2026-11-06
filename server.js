@@ -6,6 +6,7 @@ const { WebSocketTransport } = require("@colyseus/ws-transport");
 const { monitorEventLoopDelay } = require("perf_hooks");
 const { TestRoom, stats } = require("./rooms/TestRoom");
 const { FishingRoom } = require("./rooms/FishingRoom");
+const { WorldChatRoom } = require("./rooms/WorldChatRoom");
 const { MAPS } = require("./rooms/maps");
 const { createGameApi } = require("./rooms/gameApi");
 
@@ -165,6 +166,7 @@ function createGameServer({ allowedOrigins = parseOrigins(process.env.ALLOWED_OR
 
   gameServer.define("game", TestRoom); // latency / stress test room (public/index.html, stress.js)
   gameServer.define("fishing", FishingRoom).filterBy(["mapId", "code"]);
+  gameServer.define("world-chat", WorldChatRoom);
 
   return {
     gameServer,

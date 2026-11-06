@@ -40,8 +40,13 @@ Run it from your own machine to include real network distance, and note the stre
 # Pixel Fishing: realtime player API
 
 The `"fishing"` room is the multiplayer server for the Pixel Fishing game
-(`github.com/KimAyco/fishgame`). Players in the same map see each other walk, fish, emote and chat.
+(`github.com/KimAyco/fishgame`). Players in the same map see each other walk, fish and emote.
 The old `"game"` room above is untouched, so the latency page and `stress.js` still work.
+
+The authenticated `"world-chat"` room is shared by every map. Clients send `{ text }` using the
+`chat` message type; the server broadcasts cleaned messages as `world-chat` events and rate-limits each
+connection to about one message per second. The existing `chat` message in `"fishing"` remains for
+short chat bubbles between players in the same room.
 
 The game is hosted on Vercel and this server on Render. Vercel cannot hold WebSocket connections,
 so the browser connects here directly over `wss://`.

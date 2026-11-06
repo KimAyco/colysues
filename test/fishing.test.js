@@ -1,5 +1,6 @@
 // Run with `npm test`. Starts a real server on a free port and connects colyseus.js bots to it.
 process.env.FISHING_MAX_CLIENTS = "3"; // small rooms so the overflow test is cheap
+process.env.WORLD_CHAT_MAX_CLIENTS = "2"; // prove global chat still spans overflow rooms
 process.env.GAME_AUTH_SECRET = "test-game-auth-secret-0123456789-abcdefgh";
 
 const { test, before, after, afterEach } = require("node:test");
@@ -44,7 +45,15 @@ async function join(mapId, options = {}) {
   const inbox = { correct: [], chat: [], emote: [], pong: [] };
   for (const k of Object.keys(inbox)) room.onMessage(k, (m) => inbox[k].push(m));
   await waitFor(() => room.state && room.state.players && room.state.players.get(room.sessionId));
-  return { room, inbox, me: () => room.state.players.get(room.sessionId) };
+  return { room, inbox, token, me: () => room.state.players.get(room.sessionId) };
+}
+
+async function joinWorldChat(token) {
+  const room = await client.joinOrCreate("world-chat", { token });
+  open.push(room);
+  const messages = [];
+  room.onMessage("world-chat", (message) => messages.push(message));
+  return { room, messages };
 }
 
 async function waitFor(fn, ms = 2000) {
@@ -121,6 +130,30 @@ test("bad move messages are ignored", async () => {
 test("fishing rooms require a signed account token", async () => {
   await assert.rejects(client.joinOrCreate("fishing", { mapId: "pond", code: uniqueCode() }));
   await assert.rejects(client.joinOrCreate("fishing", { mapId: "pond", code: uniqueCode(), token: "not-a-token" }));
+});
+
+test("world chat reaches players on different maps and sanitizes messages", async () => {
+  const angler = await join("pond", { name: "Ann" });
+  const other = await join("swamp", { name: "Bob" });
+  const third = await join("ocean", { name: "Cleo" });
+  const anglerChat = await joinWorldChat(angler.token);
+  const otherChat = await joinWorldChat(other.token);
+  const thirdChat = await joinWorldChat(third.token);
+  assert.notEqual(anglerChat.room.roomId, thirdChat.room.roomId, "capacity overflow creates another chat room");
+
+  anglerChat.room.send("chat", { text: "  hello <world>\u0007  " });
+  await waitFor(() => otherChat.messages.length === 1);
+  await waitFor(() => thirdChat.messages.length === 1);
+  assert.equal(anglerChat.messages.length, 1, "the sender also receives the world message");
+  assert.deepEqual(otherChat.messages[0], anglerChat.messages[0]);
+  assert.equal(otherChat.messages[0].name, "Ann");
+  assert.equal(otherChat.messages[0].text, "hello world");
+  assert.ok(Number.isFinite(otherChat.messages[0].at));
+});
+
+test("world chat requires a valid signed account token", async () => {
+  await assert.rejects(client.joinOrCreate("world-chat", {}));
+  await assert.rejects(client.joinOrCreate("world-chat", { token: "not-a-token" }));
 });
 
 test("names are sanitized", async () => {
