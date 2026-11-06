@@ -1,16 +1,20 @@
 // Run with `npm test`. Starts a real server on a free port and connects colyseus.js bots to it.
 process.env.FISHING_MAX_CLIENTS = "3"; // small rooms so the overflow test is cheap
+process.env.GAME_AUTH_SECRET = "test-game-auth-secret-0123456789-abcdefgh";
 
 const { test, before, after, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { Client } = require("colyseus.js");
 const { createGameServer, parseOrigins } = require("../server");
+const { signGameToken } = require("../rooms/auth");
 
 let server;
 let port;
 let client;
 const open = [];
 let codeCounter = 0;
+let accountCounter = 0;
+const authSecret = process.env.GAME_AUTH_SECRET;
 /** Each test gets its own private room so tests do not see each other's players. */
 const uniqueCode = () => `T${++codeCounter}`;
 
@@ -32,7 +36,10 @@ after(async () => {
 });
 
 async function join(mapId, options = {}) {
-  const room = await client.joinOrCreate("fishing", { mapId, code: uniqueCode(), ...options });
+  const { name, accountId = ++accountCounter, ...joinOptions } = options;
+  const username = name ?? `Player${accountId}`;
+  const token = signGameToken(accountId, username, authSecret);
+  const room = await client.joinOrCreate("fishing", { mapId, code: uniqueCode(), ...joinOptions, token });
   open.push(room);
   const inbox = { correct: [], chat: [], emote: [], pong: [] };
   for (const k of Object.keys(inbox)) room.onMessage(k, (m) => inbox[k].push(m));
@@ -109,6 +116,11 @@ test("bad move messages are ignored", async () => {
   await sleep(150);
   assert.equal(a.me().x, 300);
   assert.equal(a.me().y, 300);
+});
+
+test("fishing rooms require a signed account token", async () => {
+  await assert.rejects(client.joinOrCreate("fishing", { mapId: "pond", code: uniqueCode() }));
+  await assert.rejects(client.joinOrCreate("fishing", { mapId: "pond", code: uniqueCode(), token: "not-a-token" }));
 });
 
 test("names are sanitized", async () => {

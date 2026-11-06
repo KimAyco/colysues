@@ -1,6 +1,7 @@
 const { Room, ServerError } = require("colyseus");
 const { Schema, MapSchema, defineTypes } = require("@colyseus/schema");
 const { isMapId, mapBounds } = require("./maps");
+const { verifyGameToken } = require("./auth");
 const { DIRS, FISH_STATES, EMOTES, num, clamp, sanitizeName, sanitizeChat, isValidCode, hueFromId, TokenBucket } = require("./validate");
 
 /** Walking speed of the game client, in world pixels per second. */
@@ -59,6 +60,7 @@ class FishingRoom extends Room {
     this.bounds = mapBounds(mapId);
     this.buckets = new Map(); // sessionId -> { msg, chat }
     this.lastMove = new Map(); // sessionId -> ms of the last accepted move
+    this.accounts = new Map(); // sessionId -> authenticated account identity
 
     this.setMetadata({ mapId, code });
     this.setState(new State());
@@ -81,22 +83,27 @@ class FishingRoom extends Room {
     const code = o.code === undefined ? "" : o.code;
     if (o.mapId !== this.mapId) throw new ServerError(4000, "wrong map");
     if (code !== this.code) throw new ServerError(4001, "wrong room code");
-    return true;
+    return verifyGameToken(o.token, process.env.GAME_AUTH_SECRET);
   }
 
-  onJoin(client, options) {
+  onJoin(client, options, auth) {
     const o = options || {};
+    if (!auth || !Number.isSafeInteger(auth.accountId)) throw new ServerError(4002, "authentication required");
+    for (const identity of this.accounts.values()) {
+      if (identity.accountId === auth.accountId) throw new ServerError(4003, "account already in this room");
+    }
     const p = new Player();
     p.x = clamp(num(o.x) ?? this.bounds.w / 2, 0, this.bounds.w);
     p.y = clamp(num(o.y) ?? this.bounds.h / 2, 0, this.bounds.h);
     p.dir = "down";
     p.moving = false;
-    p.name = sanitizeName(o.name, "Angler-" + client.sessionId.slice(0, 4));
+    p.name = sanitizeName(auth.username, "Angler-" + client.sessionId.slice(0, 4));
     p.hue = hueFromId(client.sessionId);
     p.state = "idle";
     p.bx = p.x;
     p.by = p.y;
     this.state.players.set(client.sessionId, p);
+    this.accounts.set(client.sessionId, { accountId: auth.accountId, username: auth.username, token: o.token });
     this.buckets.set(client.sessionId, { msg: new TokenBucket(40, 60), chat: new TokenBucket(1, 2) });
     this.lastMove.set(client.sessionId, Date.now());
   }
@@ -115,6 +122,7 @@ class FishingRoom extends Room {
 
   removePlayer(id) {
     this.state.players.delete(id);
+    this.accounts.delete(id);
     this.buckets.delete(id);
     this.lastMove.delete(id);
   }
